@@ -207,9 +207,9 @@ header{background:var(--brand);color:#eafff7;display:flex;align-items:center;gap
     <label>Connector link</label>
     <input id="inApi" placeholder="https://script.google.com/.../exec" autocomplete="off" autocapitalize="off">
     <label>Team passcode</label>
-    <input id="inPass" placeholder="Your team code" autocomplete="off">
+    <input id="inPass" placeholder="Your team code" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
     <label>Your name</label>
-    <input id="inRep" placeholder="e.g. Chris" autocomplete="off">
+    <input id="inRep" placeholder="e.g. Chris" autocomplete="off" autocapitalize="words" autocorrect="off">
     <label>Your role</label>
     <div class="roles" id="roles">
       <button class="role-pill" data-role="Canvasser"><span class="e">🚪</span>Canvasser</button>
@@ -670,7 +670,11 @@ $('connectBtn').onclick=async()=>{
   if(!/\/exec$/.test(api)){e.textContent='The link should end in /exec — copy the Web app URL from Apps Script.';e.classList.add('show');return;}
   $('connectBtn').textContent='Connecting…';
   try{
-    const r=await getJSON(api);if(!r||r.ok!==true)throw new Error();
+    const r=await getJSON(api);if(!r||r.ok!==true)throw new Error('unreachable');
+    const pong=await postJSON(api,{passcode:pass});   // empty write = passcode check only
+    if(pong&&pong.ok!==true&&pong.error==='bad passcode'){
+      e.textContent='That passcode doesn’t match the sheet — check capitalization (it’s case-sensitive).';e.classList.add('show');$('connectBtn').textContent='Connect';return;
+    }
     cfg={api,passcode:pass,rep,role:selectedRole};lsSet(LS.cfg,cfg);
     $('setup').classList.add('hide');applyRole();
     toast('Connected — welcome, '+rep);setTimeout(()=>map&&map.invalidateSize(),200);sync();
