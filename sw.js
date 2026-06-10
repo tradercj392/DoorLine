@@ -1,5 +1,5 @@
 /* DoorLine service worker — offline app shell + map tiles */
-const CACHE = 'doorline-v11';
+const CACHE = 'doorline-v12';
 const SHELL = [
   './',
   './index.html',
