@@ -174,6 +174,17 @@ header{background:var(--brand);color:#eafff7;display:flex;align-items:center;gap
 .msel-opt .box{width:20px;height:20px;border-radius:6px;border:2px solid var(--line);flex:0 0 auto;position:relative}
 .msel-opt.on .box{background:var(--brand);border-color:var(--brand)}
 .msel-opt.on .box::after{content:'✓';color:#fff;position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:700}
+.geo-item{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:13px 12px;border-bottom:1px solid var(--mist);font-size:14px;color:var(--ink);background:#fff}
+.geo-item:last-child{border-bottom:none}
+.geo-item:active{background:var(--mist)}
+.geo-item .ic{flex:0 0 auto}
+.geo-item .t{flex:1;min-width:0}
+.geo-item.cancel{justify-content:center;color:var(--ink-faint);font-weight:600;margin-top:4px}
+.vfilters{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:2px 16px 12px;border-bottom:1px solid var(--mist)}
+.vfilters select{border:1.5px solid var(--line);border-radius:10px;padding:10px 11px;font-size:14px;color:var(--ink);background:#fff}
+.vmeta{display:flex;align-items:center;justify-content:space-between;padding:10px 10px 12px;font-size:13px;color:var(--ink-soft);font-weight:600}
+.vmeta button{color:var(--action);font-weight:600;font-size:13px}
+.fab.sm.filtered{background:var(--brand);color:#fff;border-color:var(--brand)}
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;font-size:13.5px;font-weight:500;z-index:2100;opacity:0;pointer-events:none;transition:.22s;box-shadow:var(--shadow)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media(min-width:760px){
@@ -262,7 +273,8 @@ header{background:var(--brand);color:#eafff7;display:flex;align-items:center;gap
 
 <div class="list-panel" id="listPanel" role="dialog" aria-label="All doors">
   <div class="grab"></div>
-  <div class="list-head"><h2 id="listTitle">All doors</h2><button class="icon-btn" id="closeList" style="background:var(--mist);color:var(--ink)">✕</button></div>
+  <div class="list-head"><h2 id="listTitle">Filter &amp; view</h2><button class="icon-btn" id="closeList" style="background:var(--mist);color:var(--ink)">✕</button></div>
+  <div class="vfilters" id="vfilters"></div>
   <div class="list-scroll" id="listScroll"></div>
 </div>
 
@@ -273,10 +285,18 @@ header{background:var(--brand);color:#eafff7;display:flex;align-items:center;gap
     <div class="menu-item" id="importItem"><div class="ico">↑</div><div>Import a list<small>CSV with lat &amp; lng columns</small></div></div>
     <div class="menu-item" id="exportItem"><div class="ico">↓</div><div>Export doors<small>Download everything as CSV</small></div></div>
     <div class="menu-item" id="sampleItem"><div class="ico">▤</div><div>Download sample CSV<small>See the expected format</small></div></div>
-    <div class="menu-item" id="repFilterItem"><div class="ico">◍</div><div>Filter by rep<small id="repFilterLabel">Showing all reps</small></div></div>
+    <div class="menu-item" id="repFilterItem"><div class="ico">◍</div><div>Filter &amp; view pins<small>By date, stage, rep, or value</small></div></div>
     <div class="menu-item" id="refreshItem"><div class="ico">⟳</div><div>Refresh now<small>Pull the latest from the sheet</small></div></div>
     <div class="menu-item" id="signoutItem"><div class="ico">⏻</div><div>Connection &amp; role<small>Change link, passcode, name, or role</small></div></div>
     <div class="menu-item" id="closeMenu" style="justify-content:center;color:var(--ink-faint)">Close</div>
+  </div>
+</div>
+
+<div class="modal" id="geoPick">
+  <div class="card">
+    <h2>Which address?</h2>
+    <p>More than one match — pick the right one and the pin will go there.</p>
+    <div id="geoList"></div>
   </div>
 </div>
 
@@ -307,7 +327,8 @@ const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
 let cfg=lsGet(LS.cfg,null);
 let doors=lsGet(LS.cache,[]);
 let queue=lsGet(LS.queue,[]);
-let syncing=false, repFilter=null, filterOff={}, selectedRole=null;
+let syncing=false, filterOff={}, selectedRole=null;
+let pf={range:'all',stage:'all',rep:'all',sort:'new'};   // Filter & View panel state
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const money=n=>'$'+(Number(n)||0).toLocaleString();
 const $=id=>document.getElementById(id);
@@ -375,7 +396,7 @@ function pinIcon(stage){return L.divIcon({className:'',html:`<div class="pin" st
 function renderMarkers(){
   Object.values(markers).forEach(m=>map.removeLayer(m));for(const k in markers)delete markers[k];
   doors.forEach(d=>{
-    if(filterOff[d.stage])return;if(repFilter&&d.rep!==repFilter)return;
+    if(filterOff[d.stage])return;if(!matchesPF(d))return;
     const lat=Number(d.lat),lng=Number(d.lng);if(isNaN(lat)||isNaN(lng))return;
     const m=L.marker([lat,lng],{icon:pinIcon(d.stage),draggable:true}).addTo(map);m.on('click',()=>openSheet(d.id));
     m.on('dragend',ev=>{const p=ev.target.getLatLng();const dd=doors.find(x=>String(x.id)===String(d.id));if(dd){dd.lat=p.lat;dd.lng=p.lng;mutateUpsert(dd);toast('Pin moved');}});
@@ -383,7 +404,32 @@ function renderMarkers(){
   });
 }
 /* ---- stats + filters ---- */
-function visibleDoors(){return doors.filter(d=>!repFilter||d.rep===repFilter);}
+function inRange(d){
+  if(pf.range==='all')return true;
+  const t=Number(d.createdAt)||0,now=Date.now();
+  if(pf.range==='7')return t>=now-7*864e5;
+  if(pf.range==='30')return t>=now-30*864e5;
+  if(pf.range==='90')return t>=now-90*864e5;
+  const y=new Date(t).getFullYear(),cy=new Date().getFullYear();
+  if(pf.range==='year')return y===cy;
+  if(pf.range==='lastyear')return y===cy-1;
+  return true;
+}
+function matchesPF(d){
+  if(pf.rep!=='all'&&d.rep!==pf.rep)return false;
+  if(pf.stage!=='all'&&d.stage!==pf.stage)return false;
+  return inRange(d);
+}
+function sortDoors(arr){
+  const s=pf.sort;return arr.slice().sort((a,b)=>{
+    if(s==='old')return (a.createdAt||0)-(b.createdAt||0);
+    if(s==='updated')return (b.updatedAt||0)-(a.updatedAt||0);
+    if(s==='value')return (Number(b.value)||0)-(Number(a.value)||0);
+    return (b.createdAt||0)-(a.createdAt||0);
+  });
+}
+function pfActive(){return pf.range!=='all'||pf.stage!=='all'||pf.rep!=='all';}
+function visibleDoors(){return doors.filter(matchesPF);}
 function renderStats(){
   const ds=visibleDoors();const cnt=k=>ds.filter(d=>d.stage===k).length;
   const pipe=ds.filter(d=>OPEN.includes(d.stage)).reduce((s,d)=>s+(Number(d.value)||0),0);
@@ -396,7 +442,7 @@ function renderFilters(){
   $('filters').innerHTML=STAGES.map(s=>`<button class="chip ${filterOff[s.k]?'off':''}" data-k="${s.k}"><span class="sw" style="background:${s.c}"></span>${s.l}<span class="ct">${ds.filter(d=>d.stage===s.k).length}</span></button>`).join('');
   document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{filterOff[c.dataset.k]=!filterOff[c.dataset.k];renderFilters();renderMarkers();});
 }
-function renderAll(){if(!map)return;renderStats();renderFilters();renderMarkers();}
+function renderAll(){if(!map)return;renderStats();renderFilters();renderMarkers();const lb=$('listBtn');if(lb)lb.classList.toggle('filtered',pfActive());}
 /* ---- add ---- */
 let adding=false;
 function setAdding(on){adding=on;$('map').classList.toggle('adding',on);$('banner').classList.toggle('show',on);$('addBtn').classList.toggle('adding',on);$('searchwrap').style.display=on?'none':'block';if(on)closeSearch();}
@@ -484,14 +530,31 @@ $('closeSheet').onclick=()=>showSheet(false);
 $('delBtn').onclick=()=>{if(confirm('Delete this door?')){mutateDelete(editId);showSheet(false);toast('Door deleted');}};
 $('scrim').onclick=()=>showSheet(false);
 /* ---- list ---- */
-function openList(){
-  const ds=visibleDoors().slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-  $('listTitle').textContent=`Doors (${ds.length})`;
-  if(!ds.length){$('listScroll').innerHTML=`<div class="empty">No doors yet.<br>Tap <b>+</b> then tap a house on the map to add your first one.</div>`;}
-  else{$('listScroll').innerHTML=ds.map(d=>{const s=stageOf(d.stage);const meta=[s.l,d.rep,d.follow?('Follow-up '+d.follow):''].filter(Boolean).join(' · ');return `<div class="li" data-id="${d.id}"><div class="bar" style="background:${s.c}"></div><div class="body"><div class="nm">${d.name||d.address||'Untitled door'}</div><div class="meta">${meta}</div></div>${d.value?`<div class="val">${money(d.value)}</div>`:''}</div>`;}).join('');
-    document.querySelectorAll('.li').forEach(li=>li.onclick=()=>{const d=doors.find(x=>String(x.id)===String(li.dataset.id));$('listPanel').classList.remove('show');map.flyTo([Number(d.lat),Number(d.lng)],17,{duration:.6});setTimeout(()=>openSheet(d.id),500);});}
-  $('listPanel').classList.add('show');
+function renderVControls(){
+  const reps=[...new Set(doors.map(d=>d.rep).filter(Boolean))];
+  const opt=(v,l,cur)=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`;
+  $('vfilters').innerHTML=
+    `<select id="vRange">${opt('all','Any time',pf.range)}${opt('7','Last 7 days',pf.range)}${opt('30','Last 30 days',pf.range)}${opt('90','Last 90 days',pf.range)}${opt('year','This year',pf.range)}${opt('lastyear','Last year',pf.range)}</select>`+
+    `<select id="vStage">${opt('all','Any stage',pf.stage)}${STAGES.map(s=>opt(s.k,s.l,pf.stage)).join('')}</select>`+
+    `<select id="vRep">${opt('all','Any rep',pf.rep)}${reps.map(r=>opt(r,r,pf.rep)).join('')}</select>`+
+    `<select id="vSort">${opt('new','Newest',pf.sort)}${opt('old','Oldest',pf.sort)}${opt('updated','Recently updated',pf.sort)}${opt('value','Highest value',pf.sort)}</select>`;
+  $('vRange').onchange=e=>{pf.range=e.target.value;applyV();};
+  $('vStage').onchange=e=>{pf.stage=e.target.value;applyV();};
+  $('vRep').onchange=e=>{pf.rep=e.target.value;applyV();};
+  $('vSort').onchange=e=>{pf.sort=e.target.value;renderList();};
 }
+function renderList(){
+  const ds=sortDoors(visibleDoors());
+  const total=ds.reduce((s,d)=>s+(Number(d.value)||0),0);
+  $('listTitle').textContent=`Filter & view (${ds.length})`;
+  const head=`<div class="vmeta"><span>${ds.length} pin${ds.length!==1?'s':''}${total?` · ${money(total)} total`:''}</span>${pfActive()?'<button id="vClear">Clear filters</button>':''}</div>`;
+  if(!ds.length){$('listScroll').innerHTML=head+`<div class="empty">No pins match these filters.</div>`;}
+  else{$('listScroll').innerHTML=head+ds.map(d=>{const s=stageOf(d.stage);const when=d.createdAt?new Date(Number(d.createdAt)).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'2-digit'}):'';const meta=[s.l,d.rep,when].filter(Boolean).join(' · ');return `<div class="li" data-id="${d.id}"><div class="bar" style="background:${s.c}"></div><div class="body"><div class="nm">${d.name||d.address||'Untitled door'}</div><div class="meta">${meta}</div></div>${d.value?`<div class="val">${money(d.value)}</div>`:''}</div>`;}).join('');}
+  const clr=$('vClear');if(clr)clr.onclick=()=>{pf={range:'all',stage:'all',rep:'all',sort:'new'};renderVControls();applyV();};
+  document.querySelectorAll('#listScroll .li').forEach(li=>li.onclick=()=>{const d=doors.find(x=>String(x.id)===String(li.dataset.id));$('listPanel').classList.remove('show');map.flyTo([Number(d.lat),Number(d.lng)],17,{duration:.6});setTimeout(()=>openSheet(d.id),500);});
+}
+function applyV(){renderAll();renderList();}            // filters drive map, stats, and list together
+function openList(){renderVControls();renderList();$('listPanel').classList.add('show');}
 $('listBtn').onclick=openList;
 $('closeList').onclick=()=>$('listPanel').classList.remove('show');
 /* ---- locate ---- */
@@ -513,29 +576,40 @@ function renderResults(q){
   });
   $('geoJump').onclick=()=>addDoorAtAddress(q);
 }
-async function geocode(q){
-  const b=map.getBounds();const vb=`${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
-  const base='https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q);
-  try{
-    let r=await fetch(base+'&viewbox='+vb+'&bounded=1');let a=await r.json();   // prefer the area on screen
-    if(!a||!a[0]){r=await fetch(base);a=await r.json();}                          // fall back to anywhere
-    if(a&&a[0])return{lat:+a[0].lat,lng:+a[0].lon};
-  }catch(e){}
-  return null;
+async function geocodeCandidates(q){
+  // Search the whole US, never restrict to the visible map (that caused wrong-state pins).
+  const url='https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=6&countrycodes=us&q='+encodeURIComponent(q);
+  try{const r=await fetch(url);const a=await r.json();return (a||[]).map(x=>({lat:+x.lat,lng:+x.lon,label:x.display_name}));}
+  catch(e){return [];}
+}
+function pickCandidate(cands){
+  return new Promise(resolve=>{
+    const m=$('geoPick');
+    $('geoList').innerHTML=cands.map((c,i)=>`<button type="button" class="geo-item" data-i="${i}"><span class="ic">📍</span><span class="t">${c.label}</span></button>`).join('')+
+      `<button type="button" class="geo-item cancel" data-i="-1">Cancel</button>`;
+    m.classList.add('show');
+    m.querySelectorAll('.geo-item').forEach(b=>b.onclick=()=>{m.classList.remove('show');const i=+b.dataset.i;resolve(i<0?null:cands[i]);});
+  });
+}
+async function resolveAddress(q){
+  toast('Looking up address…');
+  const cands=await geocodeCandidates(q);
+  if(!cands.length)return null;
+  if(cands.length===1)return cands[0];
+  return await pickCandidate(cands);   // ambiguous -> let the user choose the right match
 }
 async function addDoorAtAddress(q){
-  closeSearch();toast('Locating address…');
-  const pt=await geocode(q);
-  if(!pt){toast('Address not found — try adding the city or ZIP');return;}
+  closeSearch();
+  const pt=await resolveAddress(q);
+  if(!pt){toast('Address not found — check spelling or add the ZIP');return;}
   const d={id:uid(),lat:pt.lat,lng:pt.lng,stage:'new',name:'',phone:'',email:'',address:q,interest:'',value:'',follow:'',apptAt:'',product:'',financing:'',proposalDate:'',closeDate:'',rep:cfg.rep,role:cfg.role,history:[{t:Date.now(),text:'Door created at address',by:cfg.rep}]};
   mutateUpsert(d);map.flyTo([pt.lat,pt.lng],18,{duration:.7});setTimeout(()=>openSheet(d.id),600);
   toast('Pin placed on address ✓');
 }
 async function movePinToAddress(){
   const addr=(gv('fAddress')||'').trim();if(!addr)return toast('Type an address first');
-  toast('Locating address…');
-  const pt=await geocode(addr);
-  if(!pt)return toast('Address not found — try adding the city or ZIP');
+  const pt=await resolveAddress(addr);
+  if(!pt)return toast('Address not found — check spelling or add the ZIP');
   const d=doors.find(x=>String(x.id)===String(editId));if(!d)return;
   d.lat=pt.lat;d.lng=pt.lng;d.address=addr;mutateUpsert(d);
   map.flyTo([pt.lat,pt.lng],18,{duration:.6});toast('Pin moved to address ✓');
@@ -551,7 +625,7 @@ $('menuBtn').onclick=()=>{$('menuSub').textContent=cfg?`Signed in as ${cfg.rep} 
 $('closeMenu').onclick=()=>menu.classList.remove('show');
 menu.onclick=e=>{if(e.target===menu)menu.classList.remove('show');};
 $('refreshItem').onclick=()=>{menu.classList.remove('show');toast('Refreshing…');sync();};
-$('repFilterItem').onclick=()=>{const reps=[...new Set(doors.map(d=>d.rep).filter(Boolean))];const opts=[null,...reps];const i=opts.indexOf(repFilter);repFilter=opts[(i+1)%opts.length];$('repFilterLabel').textContent=repFilter?('Showing '+repFilter):'Showing all reps';renderAll();toast(repFilter?('Filtered: '+repFilter):'Showing all reps');};
+$('repFilterItem').onclick=()=>{menu.classList.remove('show');openList();};
 $('signoutItem').onclick=()=>{menu.classList.remove('show');openSetup('');};
 $('importItem').onclick=()=>$('fileInput').click();
 $('fileInput').onchange=e=>{
