@@ -160,6 +160,20 @@ header{background:var(--brand);color:#eafff7;display:flex;align-items:center;gap
 #fNote{min-height:120px;resize:vertical;line-height:1.45}
 .h-item .htext{white-space:pre-wrap;word-break:break-word}
 .h-item .when{line-height:1.3}
+.locate-addr{margin:-4px 0 14px;font-size:13px;font-weight:600;color:var(--brand);border:1.5px dashed var(--line);border-radius:10px;padding:10px;width:100%;background:#fff}
+.locate-addr:active{background:var(--mist)}
+.msel-head{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;border:1.5px solid var(--line);border-radius:10px;padding:11px 12px;background:#fff;font-size:15px;color:var(--ink);text-align:left}
+.msel-sum{flex:1;min-width:0;white-space:normal;word-break:break-word}
+.msel-sum.ph{color:var(--ink-faint)}
+.msel .chev{color:var(--ink-faint);flex:0 0 auto}
+.msel-panel{display:none;margin-top:6px;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.msel-panel.open{display:block}
+.msel-opt{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:12px 13px;border-bottom:1px solid var(--mist);font-size:14.5px;background:#fff;color:var(--ink)}
+.msel-opt:last-child{border-bottom:none}
+.msel-opt:active{background:var(--mist)}
+.msel-opt .box{width:20px;height:20px;border-radius:6px;border:2px solid var(--line);flex:0 0 auto;position:relative}
+.msel-opt.on .box{background:var(--brand);border-color:var(--brand)}
+.msel-opt.on .box::after{content:'✓';color:#fff;position:absolute;inset:0;display:grid;place-items:center;font-size:13px;font-weight:700}
 .toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:999px;font-size:13.5px;font-weight:500;z-index:2100;opacity:0;pointer-events:none;transition:.22s;box-shadow:var(--shadow)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media(min-width:760px){
@@ -284,6 +298,7 @@ const ROLE_STAGES={
   Sales:['new','not_home','reschedule','demo_no_sale','sold']
 };
 const INTERESTS=['Siding','Windows','Doors','Exterior paint','Attic insulation','Roof','Other'];
+const PRODUCTS=['Windows','Siding','Doors','Exterior paint','Attic insulation','Roof','Other'];
 const OPEN=['appointment','proposal','reschedule'];
 const KNOCKED=s=>s!=='new';
 const LS={cfg:'doorline:cfg',cache:'doorline:doors',queue:'doorline:queue'};
@@ -362,7 +377,9 @@ function renderMarkers(){
   doors.forEach(d=>{
     if(filterOff[d.stage])return;if(repFilter&&d.rep!==repFilter)return;
     const lat=Number(d.lat),lng=Number(d.lng);if(isNaN(lat)||isNaN(lng))return;
-    const m=L.marker([lat,lng],{icon:pinIcon(d.stage)}).addTo(map);m.on('click',()=>openSheet(d.id));markers[d.id]=m;
+    const m=L.marker([lat,lng],{icon:pinIcon(d.stage),draggable:true}).addTo(map);m.on('click',()=>openSheet(d.id));
+    m.on('dragend',ev=>{const p=ev.target.getLatLng();const dd=doors.find(x=>String(x.id)===String(d.id));if(dd){dd.lat=p.lat;dd.lng=p.lng;mutateUpsert(dd);toast('Pin moved');}});
+    markers[d.id]=m;
   });
 }
 /* ---- stats + filters ---- */
@@ -387,13 +404,25 @@ $('addBtn').onclick=()=>setAdding(!adding);
 $('cancelAdd').onclick=()=>setAdding(false);
 /* ---- door sheet (role-aware) ---- */
 let editId=null;
+function mselHTML(opts,selected){
+  const sum=selected.length?selected.join(', '):'Select products…';
+  return `<div class="msel" id="mselProduct"><button type="button" class="msel-head"><span class="msel-sum ${selected.length?'':'ph'}">${sum}</span><span class="chev">▾</span></button><div class="msel-panel">`+
+    opts.map(o=>`<button type="button" class="msel-opt ${selected.includes(o)?'on':''}" data-v="${o}"><span class="box"></span>${o}</button>`).join('')+`</div></div>`;
+}
+function wireMsel(){
+  const root=$('mselProduct');if(!root)return;
+  const head=root.querySelector('.msel-head'),panel=root.querySelector('.msel-panel'),sum=root.querySelector('.msel-sum');
+  head.onclick=()=>panel.classList.toggle('open');
+  root.querySelectorAll('.msel-opt').forEach(b=>b.onclick=()=>{b.classList.toggle('on');const sel=[...root.querySelectorAll('.msel-opt.on')].map(x=>x.dataset.v);sum.textContent=sel.length?sel.join(', '):'Select products…';sum.classList.toggle('ph',!sel.length);});
+}
 function renderFields(d){
   let h='';
   if(cfg.role==='Sales'){
     h+=`<div class="row2"><div class="field"><label>Name</label><input id="fName" placeholder="Resident name"></div><div class="field"><label>Phone</label><input id="fPhone" inputmode="tel" placeholder="(555) 000-0000"></div></div>`;
     h+=`<div class="field"><label>Address</label><input id="fAddress" placeholder="123 Main St"></div>`;
     if(d&&d.interest)h+=`<div class="field"><label>Interest (from canvasser)</label><div class="readbox">${d.interest}</div></div>`;
-    h+=`<div class="field"><label>Product / system</label><input id="fProduct" placeholder="e.g. 6.4kW solar"></div>`;
+    const psel=(d?.product||'').split(',').map(s=>s.trim()).filter(Boolean);
+    h+=`<div class="field"><label>Product / system (select all that apply)</label>`+mselHTML(PRODUCTS,psel)+`</div>`;
     h+=`<div class="row2"><div class="field"><label>Deal value ($)</label><input id="fValue" inputmode="numeric" placeholder="0"></div><div class="field"><label>Financing</label><select id="fFinancing"><option value="">—</option><option>Cash</option><option>Loan</option><option>Lease</option><option>PPA</option><option>Other</option></select></div></div>`;
     h+=`<div class="row2"><div class="field"><label>Proposal sent</label><input id="fProposal" type="date"></div><div class="field"><label>Close date</label><input id="fClose" type="date"></div></div>`;
   }else{
@@ -404,8 +433,11 @@ function renderFields(d){
     h+=`<div class="field"><label>Appointment</label><input id="fAppt" type="datetime-local"></div>`;
   }
   $('fields').innerHTML=h;
+  const addrField=$('fAddress')&&$('fAddress').closest('.field');
+  if(addrField)addrField.insertAdjacentHTML('afterend','<button type="button" class="locate-addr" id="locateAddr">📍 Move pin to this address</button>');
+  const la=$('locateAddr');if(la)la.onclick=movePinToAddress;
   val('fName',d?.name);val('fPhone',d?.phone);val('fAddress',d?.address);
-  if(cfg.role==='Sales'){val('fProduct',d?.product);val('fValue',d?.value);val('fFinancing',d?.financing);val('fProposal',d?.proposalDate);val('fClose',d?.closeDate);}
+  if(cfg.role==='Sales'){val('fValue',d?.value);val('fFinancing',d?.financing);val('fProposal',d?.proposalDate);val('fClose',d?.closeDate);wireMsel();}
   else{val('fAppt',d?.apptAt);document.querySelectorAll('.ichip').forEach(b=>b.onclick=()=>b.classList.toggle('on'));}
 }
 function openSheet(id){
@@ -437,7 +469,7 @@ function saveSheet(){
   const d=doors.find(x=>String(x.id)===String(editId));if(!d)return;
   d.name=(gv('fName')||'').trim();d.phone=(gv('fPhone')||'').trim();d.address=(gv('fAddress')||'').trim();
   if(cfg.role==='Sales'){
-    d.product=(gv('fProduct')||'').trim();d.value=(gv('fValue')||'').replace(/[^0-9.]/g,'');
+    const ms=$('mselProduct');d.product=ms?[...ms.querySelectorAll('.msel-opt.on')].map(b=>b.dataset.v).join(', '):'';d.value=(gv('fValue')||'').replace(/[^0-9.]/g,'');
     d.financing=gv('fFinancing')||'';d.proposalDate=gv('fProposal')||'';d.closeDate=gv('fClose')||'';
   }else{
     d.interest=[...document.querySelectorAll('.ichip.on')].map(b=>b.dataset.v).join(', ');
@@ -473,22 +505,40 @@ function renderResults(q){
   let h=matches.map(d=>{const s=stageOf(d.stage);
     return `<div class="res-item" data-id="${d.id}"><span class="dot" style="background:${s.c}"></span><div class="t"><div class="nm">${d.name||d.address||'Untitled door'}</div><div class="meta">${[s.l,d.address&&d.name?d.address:'',d.rep].filter(Boolean).join(' · ')}</div></div></div>`;}).join('');
   if(!matches.length)h+=`<div class="res-empty">No pin here yet — nothing matches “${q}”.</div>`;
-  h+=`<div class="res-item action" id="geoJump"><span class="ic">📍</span><div class="t"><div class="nm">Go to “${q}” on the map</div><div class="meta">Jump there, then tap + to drop a pin</div></div></div>`;
+  h+=`<div class="res-item action" id="geoJump"><span class="ic">📍</span><div class="t"><div class="nm">Add a door at “${q}”</div><div class="meta">Places the pin on this address automatically</div></div></div>`;
   res.innerHTML=h;res.classList.add('show');
   res.querySelectorAll('.res-item[data-id]').forEach(el=>el.onclick=()=>{
     const d=doors.find(x=>String(x.id)===String(el.dataset.id));closeSearch();
     map.flyTo([Number(d.lat),Number(d.lng)],18,{duration:.6});setTimeout(()=>openSheet(d.id),550);
   });
-  $('geoJump').onclick=()=>geocodeJump(q);
+  $('geoJump').onclick=()=>addDoorAtAddress(q);
 }
-async function geocodeJump(q){
-  closeSearch();toast('Looking up address…');
+async function geocode(q){
+  const b=map.getBounds();const vb=`${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
+  const base='https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q);
   try{
-    const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q));
-    const a=await r.json();
-    if(a&&a[0]){map.flyTo([+a[0].lat,+a[0].lon],18,{duration:.8});toast('Found it — tap + to drop a pin');}
-    else toast('Address not found — you can drop a pin manually');
-  }catch(e){toast('Address lookup needs a connection');}
+    let r=await fetch(base+'&viewbox='+vb+'&bounded=1');let a=await r.json();   // prefer the area on screen
+    if(!a||!a[0]){r=await fetch(base);a=await r.json();}                          // fall back to anywhere
+    if(a&&a[0])return{lat:+a[0].lat,lng:+a[0].lon};
+  }catch(e){}
+  return null;
+}
+async function addDoorAtAddress(q){
+  closeSearch();toast('Locating address…');
+  const pt=await geocode(q);
+  if(!pt){toast('Address not found — try adding the city or ZIP');return;}
+  const d={id:uid(),lat:pt.lat,lng:pt.lng,stage:'new',name:'',phone:'',email:'',address:q,interest:'',value:'',follow:'',apptAt:'',product:'',financing:'',proposalDate:'',closeDate:'',rep:cfg.rep,role:cfg.role,history:[{t:Date.now(),text:'Door created at address',by:cfg.rep}]};
+  mutateUpsert(d);map.flyTo([pt.lat,pt.lng],18,{duration:.7});setTimeout(()=>openSheet(d.id),600);
+  toast('Pin placed on address ✓');
+}
+async function movePinToAddress(){
+  const addr=(gv('fAddress')||'').trim();if(!addr)return toast('Type an address first');
+  toast('Locating address…');
+  const pt=await geocode(addr);
+  if(!pt)return toast('Address not found — try adding the city or ZIP');
+  const d=doors.find(x=>String(x.id)===String(editId));if(!d)return;
+  d.lat=pt.lat;d.lng=pt.lng;d.address=addr;mutateUpsert(d);
+  map.flyTo([pt.lat,pt.lng],18,{duration:.6});toast('Pin moved to address ✓');
 }
 function closeSearch(){const i=$('searchInput');i.value='';$('searchClear').style.display='none';$('results').classList.remove('show');$('results').innerHTML='';i.blur();}
 $('searchInput').oninput=e=>{$('searchClear').style.display=e.target.value?'block':'none';renderResults(e.target.value.trim());};
